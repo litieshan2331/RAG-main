@@ -1,0 +1,49 @@
+[project]
+name = "know-engine-rag-python"
+version = "0.1.0"
+description = "Pure Python FastAPI RAG pipeline inspired by KnowEngine."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "elasticsearch>=8.14.0,<9",
+    "fastapi>=0.115.0",
+    "httpx>=0.27.0",
+    "langchain>=0.2.14",
+    "langchain-community>=0.2.12",
+    "langchain-openai>=0.1.22",
+    "langgraph>=1.0.0,<2.0.0",
+    "minio>=7.2.7",
+    "neo4j>=5.22.0",
+    "openpyxl>=3.1.5",
+    "orjson>=3.10.7",
+    "pydantic-settings>=2.4.0",
+    "pymysql>=1.1.1",
+    "python-dotenv>=1.0.1",
+    "python-multipart>=0.0.9",
+    "redis>=5.0.8",
+    "sqlalchemy>=2.0.32",
+    "uvicorn[standard]>=0.30.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.2",
+    "pytest-asyncio>=0.23.8",
+    "respx>=0.21.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"app/resources/prompts/query_router_prompt.txt" = "app/resources/prompts/query_router_prompt.txt"
+"app/resources/prompts/text_to_sql_prompt.txt" = "app/resources/prompts/text_to_sql_prompt.txt"
+"app/resources/sql/retrieve_tables.sql" = "app/resources/sql/retrieve_tables.sql"
+"app/resources/sql/tables.sql" = "app/resources/sql/tables.sql"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,88 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.python_history
+.ipython/
+.jupyter/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+
+# Tests and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# uv and package-manager caches (keep uv.lock)
+.uv-cache/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Runtime files, uploads, and generated MinerU output
+.runtime/
+output/
+uploads/
+tmp/
+temp/
+*.log
+*.pid
+
+# Local model and framework caches
+.cache/
+models/
+modelscope/
+huggingface/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local test documents placed in the repository root
+/*.pdf
+/*.doc
+/*.docx
+/*.xls
+/*.xlsx
+/*.csv
+
+# Local agent/workspace metadata
+.agents/
+.codex/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/

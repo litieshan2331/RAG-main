@@ -1,0 +1,853 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KnowEngine RAG</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --line: #d8dde6;
+      --text: #1f2937;
+      --muted: #667085;
+      --brand: #176b87;
+      --brand-strong: #0f4c5c;
+      --ok: #198754;
+      --warn: #b7791f;
+      --bad: #b42318;
+      --shadow: 0 12px 28px rgba(31, 41, 55, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(300px, 380px) 1fr;
+    }
+
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 20px;
+      overflow: auto;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 2px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: #fff;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+
+    .badge.ok {
+      color: var(--ok);
+      border-color: rgba(25, 135, 84, 0.28);
+      background: rgba(25, 135, 84, 0.08);
+    }
+
+    .badge.bad {
+      color: var(--bad);
+      border-color: rgba(180, 35, 24, 0.28);
+      background: rgba(180, 35, 24, 0.08);
+    }
+
+    .section {
+      padding: 18px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .field input[type="text"],
+    .field input[type="number"],
+    .field select {
+      width: 100%;
+      height: 38px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .file-input {
+      width: 100%;
+      min-height: 42px;
+      padding: 8px;
+      border: 1px dashed #a8b3c5;
+      border-radius: 6px;
+      background: #fbfcfe;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0 14px;
+      color: var(--muted);
+    }
+
+    .button {
+      width: 100%;
+      height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--brand);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .button.secondary {
+      background: #e9eef4;
+      color: var(--text);
+    }
+
+    .button:disabled {
+      cursor: not-allowed;
+      opacity: 0.58;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: #f1f5f9;
+      color: var(--muted);
+      min-height: 42px;
+      word-break: break-word;
+    }
+
+    .status.error {
+      color: var(--bad);
+      background: rgba(180, 35, 24, 0.08);
+    }
+
+    .status.success {
+      color: var(--ok);
+      background: rgba(25, 135, 84, 0.08);
+    }
+
+    .deps {
+      display: grid;
+      gap: 8px;
+    }
+
+    .dep {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 30px;
+      color: var(--muted);
+    }
+
+    .main {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-width: 0;
+      min-height: 100vh;
+    }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 24px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .chat-header h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .doc-meta {
+      color: var(--muted);
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .messages {
+      padding: 24px;
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 14px;
+    }
+
+    .empty {
+      max-width: 680px;
+      margin: 8vh auto 0;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .empty strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text);
+      font-size: 18px;
+    }
+
+    .message {
+      max-width: min(760px, 86%);
+      padding: 13px 15px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 3px 12px rgba(31, 41, 55, 0.05);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .message.user {
+      justify-self: end;
+      color: #fff;
+      background: var(--brand);
+      border-color: var(--brand);
+    }
+
+    .message.assistant {
+      justify-self: start;
+    }
+
+    .message-content:empty {
+      display: none;
+    }
+
+    .stream-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .stream-status[hidden] {
+      display: none;
+    }
+
+    .stream-status .spinner {
+      border-color: rgba(23, 107, 135, 0.25);
+      border-top-color: var(--brand);
+    }
+
+    .contexts {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: normal;
+    }
+
+    .contexts details {
+      margin-top: 6px;
+    }
+
+    .citation-meta {
+      margin: 5px 0;
+      color: var(--muted);
+    }
+
+    .citation-link {
+      color: var(--brand);
+      word-break: break-all;
+    }
+
+    .composer {
+      padding: 16px 24px 22px;
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr 92px;
+      gap: 10px;
+    }
+
+    .composer input {
+      width: 100%;
+      height: 44px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .composer .button {
+      height: 44px;
+    }
+
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.45);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (max-width: 860px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .main {
+        min-height: 70vh;
+      }
+
+      .message {
+        max-width: 100%;
+      }
+
+      .composer {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>KnowEngine RAG</h1>
+        <span id="healthBadge" class="badge">检查中</span>
+      </div>
+
+      <section class="section">
+        <h2>上传并索引</h2>
+        <form id="uploadForm">
+          <div class="field">
+            <label for="file">文件</label>
+            <input class="file-input" id="file" name="file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.md,.markdown,.txt,.csv,.xlsx,.xls,.json" required>
+          </div>
+          <div class="field">
+            <label for="title">标题</label>
+            <input id="title" name="title" type="text" placeholder="默认使用文件名">
+          </div>
+          <div class="field">
+            <label for="knowledgeBaseType">入库类型</label>
+            <select id="knowledgeBaseType" name="knowledgeBaseType">
+              <option value="DOCUMENT_SEARCH">文档检索</option>
+              <option value="STRUCTURED_TABLE">结构化表</option>
+              <option value="GRAPH_DATA">图数据</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="tableName">表名</label>
+            <input id="tableName" name="tableName" type="text" placeholder="结构化表可选">
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="chunkSize">分块大小</label>
+              <input id="chunkSize" name="chunkSize" type="number" min="100" value="1000">
+            </div>
+            <div class="field">
+              <label for="overlap">重叠字符</label>
+              <input id="overlap" name="overlap" type="number" min="0" value="80">
+            </div>
+          </div>
+          <label class="check">
+            <input id="stripHeaders" type="checkbox">
+            <span>分块文本去掉 Markdown 标题</span>
+          </label>
+          <button id="uploadButton" class="button" type="submit">
+            <span>上传并解析</span>
+          </button>
+          <button id="cancelIngestion" class="button secondary" type="button" hidden>取消入库任务</button>
+        </form>
+        <div id="uploadStatus" class="status">等待上传文件。</div>
+      </section>
+
+      <section class="section">
+        <h2>依赖状态</h2>
+        <div id="deps" class="deps"></div>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="chat-header">
+        <div>
+          <h2>知识库问答</h2>
+          <div id="chatDocMeta" class="doc-meta">从全部已入库文档中检索回答。</div>
+        </div>
+        <span id="chatState" class="badge ok">可提问</span>
+      </header>
+
+      <section id="messages" class="messages">
+        <div class="empty">
+          <strong>直接询问知识库</strong>
+          系统会从全部已入库文档中进行混合检索；也可以继续上传新文件扩充知识库。
+        </div>
+      </section>
+
+      <form id="chatForm" class="composer">
+        <input id="query" type="text" placeholder="询问知识库中的内容" autocomplete="off">
+        <button id="sendButton" class="button" type="submit">发送</button>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    const savedIngestion = JSON.parse(sessionStorage.getItem("activeIngestion") || "null");
+    const state = {
+      conversationId: sessionStorage.getItem("conversationId"),
+      activeTaskId: savedIngestion?.task_id || null,
+      busy: false
+    };
+
+    const healthBadge = document.getElementById("healthBadge");
+    const deps = document.getElementById("deps");
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadButton = document.getElementById("uploadButton");
+    const cancelIngestion = document.getElementById("cancelIngestion");
+    const uploadStatus = document.getElementById("uploadStatus");
+    const chatDocMeta = document.getElementById("chatDocMeta");
+    const chatState = document.getElementById("chatState");
+    const messages = document.getElementById("messages");
+    const chatForm = document.getElementById("chatForm");
+    const queryInput = document.getElementById("query");
+    const sendButton = document.getElementById("sendButton");
+
+    function setStatus(element, text, kind = "") {
+      element.className = `status ${kind}`.trim();
+      element.textContent = text;
+    }
+
+    function setBusy(isBusy, label) {
+      state.busy = isBusy;
+      uploadButton.disabled = isBusy;
+      sendButton.disabled = isBusy;
+      queryInput.disabled = isBusy;
+      uploadButton.innerHTML = isBusy ? `<span class="spinner"></span><span>${label}</span>` : "<span>上传并解析</span>";
+    }
+
+    function updateDocumentView() {
+      chatDocMeta.textContent = "从全部已入库文档中检索回答。";
+      chatState.className = "badge ok";
+      chatState.textContent = "可提问";
+      queryInput.disabled = state.busy;
+      sendButton.disabled = state.busy;
+    }
+
+    function clearMessages() {
+      messages.innerHTML = "";
+    }
+
+    function appendMessage(role, text, contexts = []) {
+      const empty = messages.querySelector(".empty");
+      if (empty) clearMessages();
+
+      const node = document.createElement("article");
+      node.className = `message ${role}`;
+      const content = document.createElement("div");
+      content.className = "message-content";
+      content.textContent = text;
+      node.appendChild(content);
+      appendContexts(node, contexts);
+
+      messages.appendChild(node);
+      messages.scrollTop = messages.scrollHeight;
+      return node;
+    }
+
+    function appendContexts(node, contexts = []) {
+      if (!contexts.length || node.querySelector(".contexts")) return;
+      const wrap = document.createElement("div");
+      wrap.className = "contexts";
+      contexts.slice(0, 8).forEach((item, index) => {
+        const metadata = item.metadata || {};
+        const title = metadata.title || metadata.fileName || metadata.url || item.source || `来源 ${index + 1}`;
+        const score = item.score == null ? "" : ` · score ${Number(item.score).toFixed(3)}`;
+        const detail = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = `${index + 1}. ${title}${score}`;
+
+        const meta = document.createElement("div");
+        meta.className = "citation-meta";
+        const metaParts = [];
+        if (metadata.docId != null) metaParts.push(`doc_id=${metadata.docId}`);
+        if (metadata.chunkId) metaParts.push(`chunk_id=${metadata.chunkId}`);
+        if (metadata.expandedFromParentChunkId) metaParts.push(`parent=${metadata.expandedFromParentChunkId}`);
+        if (item.source) metaParts.push(`source=${item.source}`);
+        meta.textContent = metaParts.join(" · ");
+
+        const body = document.createElement("div");
+        body.textContent = item.text || "";
+        detail.append(summary, meta, body);
+
+        const url = metadata.url || (/^https?:\/\//i.test(item.source || "") ? item.source : "");
+        if (/^https?:\/\//i.test(url)) {
+          const link = document.createElement("a");
+          link.className = "citation-link";
+          link.href = url;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.textContent = url;
+          detail.appendChild(link);
+        }
+        wrap.appendChild(detail);
+      });
+      node.appendChild(wrap);
+    }
+
+    function appendStreamingAssistant() {
+      const empty = messages.querySelector(".empty");
+      if (empty) clearMessages();
+      const node = document.createElement("article");
+      node.className = "message assistant";
+
+      const status = document.createElement("div");
+      status.className = "stream-status";
+      const spinner = document.createElement("span");
+      spinner.className = "spinner";
+      const statusText = document.createElement("span");
+      statusText.textContent = "正在分析问题";
+      status.append(spinner, statusText);
+
+      const content = document.createElement("div");
+      content.className = "message-content";
+      node.append(status, content);
+      messages.appendChild(node);
+      messages.scrollTop = messages.scrollHeight;
+      return { node, status, statusText, content };
+    }
+
+    async function requestJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = payload.detail || payload.message || response.statusText;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return payload;
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async function streamJsonEvents(url, body, onEvent) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || response.statusText || "无法建立流式连接");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replaceAll("\r\n", "\n");
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          if (block.trim()) {
+            let eventName = "message";
+            const dataLines = [];
+            block.split("\n").forEach((line) => {
+              if (line.startsWith("event:")) eventName = line.slice(6).trim();
+              if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+            });
+            const rawData = dataLines.join("\n");
+            const eventData = rawData ? JSON.parse(rawData) : {};
+            onEvent(eventName, eventData);
+          }
+          boundary = buffer.indexOf("\n\n");
+        }
+        if (done) break;
+      }
+    }
+
+    async function pollIngestionTask(uploadPayload, title, knowledgeBaseType) {
+      state.activeTaskId = uploadPayload.task_id;
+      sessionStorage.setItem("activeIngestion", JSON.stringify({
+        ...uploadPayload,
+        title,
+        knowledge_base_type: knowledgeBaseType
+      }));
+      cancelIngestion.hidden = false;
+      while (state.activeTaskId === uploadPayload.task_id) {
+        const task = await requestJson(`/api/ingestion-tasks/${uploadPayload.task_id}`);
+        const detail = task.error_message || task.message || "";
+        setStatus(uploadStatus, `${task.stage} · ${task.progress}% · ${detail}`);
+
+        if (task.status === "COMPLETED") {
+          sessionStorage.removeItem("activeIngestion");
+          state.activeTaskId = null;
+          cancelIngestion.hidden = true;
+          setStatus(uploadStatus, "索引完成，可以开始提问。", "success");
+          updateDocumentView();
+          clearMessages();
+          appendMessage("assistant", `数据已准备好：${title}\ntype=${knowledgeBaseType}\ndoc_id=${uploadPayload.doc_id}`);
+          queryInput.focus();
+          return;
+        }
+
+        if (task.status === "FAILED") {
+          sessionStorage.removeItem("activeIngestion");
+          state.activeTaskId = null;
+          cancelIngestion.hidden = true;
+          throw new Error(task.error_message || task.message || "后台入库失败");
+        }
+
+        if (task.status === "CANCELLED") {
+          sessionStorage.removeItem("activeIngestion");
+          state.activeTaskId = null;
+          cancelIngestion.hidden = true;
+          setStatus(uploadStatus, task.message || "入库任务已取消。", "error");
+          return;
+        }
+        await sleep(1500);
+      }
+    }
+
+    async function refreshHealth() {
+      try {
+        const payload = await requestJson("/health/ready");
+        const ok = payload.status === "ok";
+        healthBadge.className = `badge ${ok ? "ok" : "bad"}`;
+        healthBadge.textContent = ok ? "依赖正常" : "依赖异常";
+        deps.innerHTML = "";
+        payload.dependencies.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "dep";
+          const name = document.createElement("span");
+          name.textContent = item.detail ? `${item.name}: ${item.detail}` : item.name;
+          const badge = document.createElement("span");
+          badge.className = `badge ${item.ok ? "ok" : "bad"}`;
+          badge.textContent = item.ok ? "ok" : "fail";
+          row.append(name, badge);
+          deps.appendChild(row);
+        });
+      } catch (error) {
+        healthBadge.className = "badge bad";
+        healthBadge.textContent = "无法检查";
+        deps.textContent = error.message;
+      }
+    }
+
+    uploadForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const fileInput = document.getElementById("file");
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      const knowledgeBaseType = document.getElementById("knowledgeBaseType").value;
+      formData.append("file", file);
+      formData.append("title", document.getElementById("title").value || file.name);
+      formData.append("knowledge_base_type", knowledgeBaseType);
+      formData.append("table_name", document.getElementById("tableName").value || "");
+      formData.append("chunk_size", document.getElementById("chunkSize").value || "1000");
+      formData.append("overlap", document.getElementById("overlap").value || "80");
+      formData.append("strip_headers", document.getElementById("stripHeaders").checked ? "true" : "false");
+
+      setBusy(true, "后台入库中");
+      setStatus(uploadStatus, "正在上传文件并创建后台入库任务。");
+      try {
+        const payload = await requestJson("/api/documents/upload-and-ingest-async", {
+          method: "POST",
+          body: formData
+        });
+        state.conversationId = null;
+        sessionStorage.removeItem("conversationId");
+        setStatus(uploadStatus, `文件上传完成，后台任务 ${payload.task_id} 已提交。`);
+        await pollIngestionTask(payload, formData.get("title"), knowledgeBaseType);
+      } catch (error) {
+        setStatus(uploadStatus, error.message, "error");
+      } finally {
+        setBusy(false);
+        refreshHealth();
+      }
+    });
+
+    cancelIngestion.addEventListener("click", async () => {
+      if (!state.activeTaskId) return;
+      cancelIngestion.disabled = true;
+      try {
+        const task = await requestJson(`/api/ingestion-tasks/${state.activeTaskId}/cancel`, {
+          method: "POST"
+        });
+        setStatus(uploadStatus, task.message || "已请求取消后台入库任务。");
+      } catch (error) {
+        setStatus(uploadStatus, error.message, "error");
+      } finally {
+        cancelIngestion.disabled = false;
+      }
+    });
+
+    chatForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = queryInput.value.trim();
+      if (!query) return;
+
+      appendMessage("user", query);
+      const streamMessage = appendStreamingAssistant();
+      queryInput.value = "";
+      setBusy(true, "对话处理中");
+      chatState.textContent = "思考中";
+      let completed = false;
+      let citations = [];
+      try {
+        const body = {
+          query,
+          user_id: "web",
+          top_k: 5,
+          conversation_id: state.conversationId
+        };
+        await streamJsonEvents("/api/chat/rag/stream", body, (eventName, payload) => {
+          if (eventName === "started" || eventName === "status") {
+            streamMessage.statusText.textContent = payload.message || "正在处理";
+          } else if (eventName === "route") {
+            const strategy = payload.strategy || payload.decision?.strategy || "knowledge_base";
+            streamMessage.statusText.textContent = `已选择路径：${strategy}`;
+          } else if (eventName === "tool_started") {
+            streamMessage.statusText.textContent = payload.message || `正在调用 ${payload.tool}`;
+          } else if (eventName === "tool_finished") {
+            streamMessage.statusText.textContent = `${payload.tool} 调用完成，正在生成回答`;
+          } else if (eventName === "tool_failed") {
+            streamMessage.statusText.textContent = `${payload.tool} 调用失败，正在尝试备用路径`;
+          } else if (eventName === "token") {
+            streamMessage.content.textContent += payload.content || "";
+            messages.scrollTop = messages.scrollHeight;
+          } else if (eventName === "citations") {
+            citations = payload.items || [];
+          } else if (eventName === "completed") {
+            completed = true;
+            state.conversationId = payload.conversation_id;
+            sessionStorage.setItem("conversationId", state.conversationId);
+            if (!streamMessage.content.textContent) {
+              streamMessage.content.textContent = payload.answer || "没有生成回答。";
+            }
+            appendContexts(streamMessage.node, payload.contexts || citations);
+            streamMessage.status.hidden = true;
+            chatState.textContent = "可提问";
+          } else if (eventName === "error") {
+            throw new Error(payload.message || "流式请求失败");
+          }
+        });
+        if (!completed) throw new Error("流式连接在完成事件之前关闭");
+      } catch (error) {
+        streamMessage.status.hidden = true;
+        if (streamMessage.content.textContent) {
+          streamMessage.content.textContent += `\n\n[流式请求中断：${error.message}]`;
+        } else {
+          streamMessage.content.textContent = `请求失败：${error.message}`;
+        }
+        chatState.textContent = "请求失败";
+      } finally {
+        setBusy(false);
+        if (completed) chatState.textContent = "可提问";
+        queryInput.focus();
+      }
+    });
+
+    updateDocumentView();
+    refreshHealth();
+    if (savedIngestion?.task_id) {
+      setBusy(true, "后台入库中");
+      setStatus(uploadStatus, `正在恢复任务 ${savedIngestion.task_id} 的进度。`);
+      pollIngestionTask(
+        savedIngestion,
+        savedIngestion.title || `document-${savedIngestion.doc_id}`,
+        savedIngestion.knowledge_base_type || "DOCUMENT_SEARCH"
+      ).catch((error) => {
+        sessionStorage.removeItem("activeIngestion");
+        state.activeTaskId = null;
+        cancelIngestion.hidden = true;
+        setStatus(uploadStatus, error.message, "error");
+      }).finally(() => {
+        setBusy(false);
+        refreshHealth();
+      });
+    }
+  </script>
+</body>
+</html>
