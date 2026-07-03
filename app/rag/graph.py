@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.rag.conversation import (
     ContextDependencyDecision,
+    ContextualizedQuery,
     ConversationContextService,
     ConversationRepository,
     ConversationTurn,
@@ -54,6 +55,8 @@ class RagGraphState(TypedDict, total=False):
     depends_on_history: bool
     rewritten_query: str
     execution_query: str
+    requires_decomposition: bool
+    sub_queries: list[dict[str, Any]]
     force_knowledge_base: bool
     route_decision: QueryRouteDecision
     fallback_routes: list[Strategy]
@@ -220,9 +223,7 @@ class OnlineRagGraph:
             }
         messages = {
             "load_history": "正在加载对话历史",
-            "context_dependency": "正在判断当前问题是否依赖历史上下文",
-            "rewrite_followup": "正在将追问改写为独立问题",
-            "use_original": "正在准备当前问题",
+            "contextualize_query": "正在判断上下文依赖并生成独立问题",
             "route": "正在识别意图并选择工具",
             "answer": "正在生成回答",
             "persist_turn": "正在保存本轮对话",
@@ -233,14 +234,10 @@ class OnlineRagGraph:
 
     @staticmethod
     def _events_for_node(node_name: str, update: RagGraphState) -> Iterator[dict[str, Any]]:
-        if node_name == "context_dependency":
+        if node_name == "contextualize_query":
             depends = bool(update.get("depends_on_history"))
-            message = "检测到追问，正在结合历史上下文" if depends else "问题可独立理解，正在选择检索路径"
+            message = "追问已结合历史改写为独立问题" if depends else "问题可独立理解，正在选择检索路径"
             yield {"event": "status", "data": {"stage": "routing", "node": node_name, "message": message}}
-            return
-
-        if node_name == "rewrite_followup":
-            yield {"event": "status", "data": {"stage": "routing", "node": node_name, "message": "追问已改写为独立问题"}}
             return
 
         if node_name == "route":
@@ -276,9 +273,7 @@ class OnlineRagGraph:
     def _build_graph(self):
         workflow = StateGraph(RagGraphState)
         workflow.add_node("load_history", self._load_history_node)
-        workflow.add_node("context_dependency", self._context_dependency_node)
-        workflow.add_node("rewrite_followup", self._rewrite_followup_node)
-        workflow.add_node("use_original", self._use_original_node)
+        workflow.add_node("contextualize_query", self._contextualize_query_node)
         workflow.add_node("route", self._route_node)
         workflow.add_node("hybrid_retrieval", self._hybrid_retrieval_node)
         workflow.add_node("text2sql", self._text2sql_node)
@@ -289,14 +284,8 @@ class OnlineRagGraph:
         workflow.add_node("persist_turn", self._persist_turn_node)
 
         workflow.set_entry_point("load_history")
-        workflow.add_edge("load_history", "context_dependency")
-        workflow.add_conditional_edges(
-            "context_dependency",
-            self._after_context_dependency,
-            {"rewrite_followup": "rewrite_followup", "use_original": "use_original"},
-        )
-        workflow.add_edge("rewrite_followup", "route")
-        workflow.add_edge("use_original", "route")
+        workflow.add_edge("load_history", "contextualize_query")
+        workflow.add_edge("contextualize_query", "route")
         workflow.add_conditional_edges("route", self._next_tool_node, TOOL_EDGE_MAP)
         for node_name in TOOL_NODE_BY_STRATEGY.values():
             workflow.add_conditional_edges(node_name, self._after_tool, TOOL_EDGE_MAP)
@@ -315,37 +304,24 @@ class OnlineRagGraph:
             }
         return {"history": history}
 
-    def _context_dependency_node(self, state: RagGraphState) -> RagGraphState:
+    def _contextualize_query_node(self, state: RagGraphState) -> RagGraphState:
         try:
-            decision = self.context_service.assess_dependency(state["query"], state.get("history") or [])
+            result = self.context_service.contextualize(state["query"], state.get("history") or [])
         except Exception as exc:
             decision = ContextDependencyDecision(False, "依赖判断失败，按独立问题处理。", 0.0)
             return {
+                **self._query_payload(state["query"], state),
                 "context_decision": decision,
                 "depends_on_history": False,
-                "errors": [*state.get("errors", []), f"context_dependency failed: {exc}"],
+                "errors": [*state.get("errors", []), f"contextualize_query failed: {exc}"],
             }
-        return {"context_decision": decision, "depends_on_history": decision.depends_on_history}
-
-    @staticmethod
-    def _after_context_dependency(state: RagGraphState) -> str:
-        if state.get("depends_on_history") and state.get("history"):
-            return "rewrite_followup"
-        return "use_original"
-
-    def _rewrite_followup_node(self, state: RagGraphState) -> RagGraphState:
-        try:
-            rewritten = self.context_service.rewrite_follow_up(state["query"], state.get("history") or [])
-        except Exception as exc:
-            rewritten = state["query"]
-            return {
-                **self._query_payload(rewritten, state),
-                "errors": [*state.get("errors", []), f"rewrite_followup failed: {exc}"],
-            }
-        return self._query_payload(rewritten, state)
-
-    def _use_original_node(self, state: RagGraphState) -> RagGraphState:
-        return self._query_payload(state["query"], state)
+        return {
+            **self._query_payload(result.standalone_query, state),
+            "context_decision": result.decision,
+            "depends_on_history": result.decision.depends_on_history,
+            "requires_decomposition": result.decision.requires_decomposition,
+            "sub_queries": result.decision.sub_queries,
+        }
 
     @staticmethod
     def _query_payload(query: str, state: RagGraphState) -> RagGraphState:
@@ -360,7 +336,15 @@ class OnlineRagGraph:
         force_knowledge_base = bool(state.get("force_knowledge_base"))
         errors = list(state.get("errors") or [])
         routing_query = state.get("rewritten_query") or state["query"]
-        if not force_knowledge_base and self._is_explicit_web_query(routing_query):
+        if state.get("requires_decomposition") and self.settings.react_agent_enabled:
+            decision = QueryRouteDecision(
+                "多跳问题规划与执行",
+                "react_agent",
+                "问题已拆分为存在依赖关系的多个步骤，需要按计划逐步调用工具并汇总证据。",
+                0.98,
+                slots={"sub_queries": state.get("sub_queries") or []},
+            )
+        elif not force_knowledge_base and self._is_explicit_web_query(routing_query):
             decision = QueryRouteDecision(
                 "实时公开信息查询",
                 "web_search",
@@ -373,7 +357,10 @@ class OnlineRagGraph:
             except Exception as exc:
                 decision = self._fallback_route_decision(routing_query, force_knowledge_base=force_knowledge_base)
                 errors.append(f"route LLM failed: {exc}")
-        fallback_routes = self.router.fallback_order(decision, force_knowledge_base=force_knowledge_base)
+        if decision.strategy == "react_agent":
+            fallback_routes = ["react_agent"]
+        else:
+            fallback_routes = self.router.fallback_order(decision, force_knowledge_base=force_knowledge_base)
         if self._should_enter_react(decision, force_knowledge_base=force_knowledge_base):
             fallback_routes = ["react_agent"]
         return {
@@ -402,6 +389,7 @@ class OnlineRagGraph:
                 top_k=state.get("top_k") or 5,
                 document_id=state.get("document_id"),
                 prior_errors=state.get("errors") or [],
+                query_plan=state.get("sub_queries") or [],
             )
         except Exception as exc:
             trace.append(

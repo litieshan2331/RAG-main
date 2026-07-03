@@ -58,6 +58,7 @@ class ReactAgent:
         top_k: int,
         document_id: int | None = None,
         prior_errors: list[str] | None = None,
+        query_plan: list[dict[str, Any]] | None = None,
     ) -> RagToolResult:
         allowed_tools = self._allowed_tools(document_id=document_id)
         observations: list[dict[str, Any]] = []
@@ -73,6 +74,7 @@ class ReactAgent:
                 observations=observations,
                 prior_errors=prior_errors or [],
                 compression_state=compression_state,
+                query_plan=query_plan or [],
             )
             thought = str(action.get("thought") or "").strip()
             action_name = self._normalize_action(action.get("action"), allowed_tools)
@@ -139,6 +141,7 @@ class ReactAgent:
                 "max_steps": self.settings.react_agent_max_steps,
                 "steps_used": len(observations),
                 "allowed_tools": list(allowed_tools),
+                "query_plan": query_plan or [],
                 "finished_with_final_action": any(item.get("action") == "final_answer" for item in observations),
                 "trace": observations,
                 "compression": {
@@ -160,6 +163,7 @@ class ReactAgent:
         observations: list[dict[str, Any]],
         prior_errors: list[str],
         compression_state: CompressionState,
+        query_plan: list[dict[str, Any]],
     ) -> dict[str, Any]:
         prompt = self._action_prompt(
             query=query,
@@ -167,6 +171,7 @@ class ReactAgent:
             allowed_tools=allowed_tools,
             observations=self.compressor.compress_observations(observations, compression_state),
             prior_errors=prior_errors,
+            query_plan=query_plan,
         )
         response = self.llm.invoke(prompt).content
         return self._parse_action(str(response), allowed_tools)
@@ -250,8 +255,10 @@ class ReactAgent:
         allowed_tools: tuple[Strategy, ...],
         observations: str,
         prior_errors: list[str],
+        query_plan: list[dict[str, Any]],
     ) -> str:
         prior_error_text = "\n".join(prior_errors) if prior_errors else "无"
+        query_plan_text = json.dumps(query_plan, ensure_ascii=False) if query_plan else "无预先拆分计划"
         return f"""
 你是一个手搓 ReAct 多工具代理。你需要通过 Thought -> Action -> Observation 的方式逐步解决用户问题。
 
@@ -272,6 +279,11 @@ allowed_tools:
 3. 如果已有观察结果足够回答，选择 final_answer。
 4. 不要重复调用已经失败且没有新价值的工具。
 5. action_input 应是给该工具的独立检索问题。
+6. 如果提供了 query_plan，优先按依赖顺序完成其中尚未获得证据的步骤；依赖未满足时不要提前执行后续步骤。
+7. query_plan 是初始计划，可以根据工具观察结果调整，但不得遗漏用户要求的目标。
+
+query_plan:
+{query_plan_text}
 
 prior_errors:
 {prior_error_text}

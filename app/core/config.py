@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     conversation_history_max_chars: int = 8_000
     context_dependency_threshold: float = 0.6
 
+    ragas_judge_model: str = ""
+    ragas_timeout_seconds: float = 120
+    ragas_max_samples: int = 50
+
     ingestion_worker_count: int = 2
 
 

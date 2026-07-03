@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import desc, select
@@ -11,6 +13,29 @@ from app.core.config import Settings, get_settings
 from app.core.ids import snowflake
 from app.core.json_utils import fix_json
 from app.models.entities import ChatConversation, ChatMessage
+
+
+CONTEXTUALIZER_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1] / "resources" / "prompts" / "conversation_contextualizer_prompt.txt"
+)
+MULTI_HOP_MARKERS = (
+    "结合",
+    "对比",
+    "比较",
+    "先查询",
+    "先查",
+    "再查询",
+    "再查",
+    "然后",
+    "分别查询",
+    "分别查",
+    "并判断",
+    "并分析",
+    "并给出依据",
+    "基于上述",
+    "根据结果",
+    "综合判断",
+)
 
 
 @dataclass(frozen=True)
@@ -25,9 +50,17 @@ class ContextDependencyDecision:
     depends_on_history: bool
     reasoning: str
     confidence: float
+    requires_decomposition: bool = False
+    sub_queries: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextualizedQuery:
+    standalone_query: str
+    decision: ContextDependencyDecision
 
 
 class ConversationRepository:
@@ -130,24 +163,29 @@ class ConversationContextService:
             llm = get_chat_model(temperature=0)
         self.llm = llm
 
-    def assess_dependency(self, query: str, history: list[ConversationTurn]) -> ContextDependencyDecision:
-        if not history:
-            return ContextDependencyDecision(False, "没有历史消息，当前问题是独立问题。", 1.0)
-
-        response = self.llm.invoke(self._dependency_prompt(query, self.format_history(history))).content
-        decision = self.parse_dependency(str(response))
-        if decision.confidence < self.settings.context_dependency_threshold:
-            return ContextDependencyDecision(
-                False,
-                f"依赖判断置信度不足，按独立问题处理：{decision.reasoning}",
-                decision.confidence,
+    def contextualize(self, query: str, history: list[ConversationTurn]) -> ContextualizedQuery:
+        if not history and not self._looks_like_multi_hop(query):
+            return ContextualizedQuery(
+                standalone_query=query,
+                decision=ContextDependencyDecision(False, "没有历史消息，当前问题是独立问题。", 1.0),
             )
-        return decision
 
-    def rewrite_follow_up(self, query: str, history: list[ConversationTurn]) -> str:
-        response = self.llm.invoke(self._rewrite_prompt(query, self.format_history(history))).content
-        rewritten = str(response).strip()
-        return rewritten or query
+        formatted_history = self.format_history(history) if history else "（无历史对话）"
+        response = self.llm.invoke(self._contextualizer_prompt(query, formatted_history)).content
+        result = self.parse_contextualization(str(response), query)
+        decision = result.decision
+        if decision.confidence < self.settings.context_dependency_threshold:
+            return ContextualizedQuery(
+                standalone_query=query,
+                decision=ContextDependencyDecision(
+                    False,
+                    f"依赖判断置信度不足，按独立问题处理：{decision.reasoning}",
+                    decision.confidence,
+                ),
+            )
+        if not decision.depends_on_history:
+            return ContextualizedQuery(standalone_query=query, decision=decision)
+        return result
 
     def format_history(self, history: list[ConversationTurn]) -> str:
         selected: list[str] = []
@@ -162,13 +200,19 @@ class ConversationContextService:
         return "\n".join(reversed(selected))
 
     @staticmethod
-    def parse_dependency(response: str) -> ContextDependencyDecision:
+    def parse_contextualization(response: str, original_query: str) -> ContextualizedQuery:
         try:
             payload = json.loads(fix_json(response))
         except Exception:
-            return ContextDependencyDecision(False, "依赖判断输出不是合法 JSON，按独立问题处理。", 0.0)
+            return ContextualizedQuery(
+                standalone_query=original_query,
+                decision=ContextDependencyDecision(False, "上下文处理输出不是合法 JSON，按独立问题处理。", 0.0),
+            )
         if not isinstance(payload, dict):
-            return ContextDependencyDecision(False, "依赖判断输出不是 JSON 对象，按独立问题处理。", 0.0)
+            return ContextualizedQuery(
+                standalone_query=original_query,
+                decision=ContextDependencyDecision(False, "上下文处理输出不是 JSON 对象，按独立问题处理。", 0.0),
+            )
 
         raw_value = payload.get("depends_on_history", False)
         depends_on_history = raw_value if isinstance(raw_value, bool) else str(raw_value).lower() == "true"
@@ -176,55 +220,87 @@ class ConversationContextService:
             confidence = max(0.0, min(1.0, float(payload.get("confidence", 0))))
         except (TypeError, ValueError):
             confidence = 0.0
-        return ContextDependencyDecision(
-            depends_on_history=depends_on_history,
-            reasoning=str(payload.get("reasoning") or "模型未给出原因。").strip(),
-            confidence=confidence,
+        standalone_query = str(payload.get("standalone_query") or "").strip()
+        raw_requires_decomposition = payload.get("requires_decomposition", False)
+        requires_decomposition = (
+            raw_requires_decomposition
+            if isinstance(raw_requires_decomposition, bool)
+            else str(raw_requires_decomposition).lower() == "true"
+        )
+        sub_queries = ConversationContextService._normalize_sub_queries(payload.get("sub_queries"))
+        if len(sub_queries) < 2:
+            requires_decomposition = False
+            sub_queries = []
+        if depends_on_history and not standalone_query:
+            return ContextualizedQuery(
+                standalone_query=original_query,
+                decision=ContextDependencyDecision(
+                    False,
+                    "模型判定问题依赖历史，但未生成独立问题，按原问题处理。",
+                    0.0,
+                ),
+            )
+        return ContextualizedQuery(
+            standalone_query=standalone_query if depends_on_history else original_query,
+            decision=ContextDependencyDecision(
+                depends_on_history=depends_on_history,
+                reasoning=str(payload.get("reasoning") or "模型未给出原因。").strip(),
+                confidence=confidence,
+                requires_decomposition=requires_decomposition,
+                sub_queries=sub_queries,
+            ),
         )
 
     @staticmethod
-    def _dependency_prompt(query: str, history: str) -> str:
-        return f"""
-你是多轮对话上下文依赖分类器。只判断当前问题是否必须依赖历史对话才能理解，不要回答问题。
+    def _normalize_sub_queries(value: object) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
 
-判定为依赖历史的情况：
-- 使用“它、这个、那个、上述、前者、后者、继续、再说说、为什么、还有呢”等指代或省略。
-- 当前问题省略了实体、车型、文档、时间、比较对象或动作，必须从历史中补全。
-- 明确要求对上一轮回答继续解释、比较、追问或修正。
+        normalized: list[dict[str, Any]] = []
+        known_ids: set[str] = set()
+        for index, item in enumerate(value[:5], start=1):
+            if isinstance(item, str):
+                query = item.strip()
+                raw_id = f"q{index}"
+                raw_dependencies: object = []
+            elif isinstance(item, dict):
+                query = str(item.get("query") or "").strip()
+                raw_id = str(item.get("id") or f"q{index}").strip()
+                raw_dependencies = item.get("depends_on") or []
+            else:
+                continue
+            if not query:
+                continue
 
-判定为不依赖历史的情况：
-- 当前问题已经包含完整实体和意图，可以独立理解。
-- 话题发生切换，即使历史里有相似词，也不要继承历史意图。
-- 只是礼貌语或新的完整问题。
-
-历史对话：
-{history}
-
-当前问题：
-{query}
-
-严格只输出 JSON：
-{{
-  "depends_on_history": true,
-  "reasoning": "判断依据",
-  "confidence": 0.90
-}}
-"""
+            step_id = raw_id if raw_id and raw_id not in known_ids else f"q{index}"
+            if step_id in known_ids:
+                step_id = f"q{index}_{len(normalized) + 1}"
+            dependencies = (
+                [str(dependency).strip() for dependency in raw_dependencies]
+                if isinstance(raw_dependencies, list)
+                else []
+            )
+            dependencies = [dependency for dependency in dependencies if dependency in known_ids]
+            normalized.append({"id": step_id, "query": query, "depends_on": dependencies})
+            known_ids.add(step_id)
+        return normalized
 
     @staticmethod
-    def _rewrite_prompt(query: str, history: str) -> str:
-        return f"""
-你是多轮对话问题重写器。当前问题已被确认依赖历史对话，请将它改写为无需历史也能理解的独立问题。
+    def _looks_like_multi_hop(query: str) -> bool:
+        normalized = "".join(query.lower().split())
+        if sum(normalized.count(mark) for mark in ("?", "？")) >= 2:
+            return True
+        return any(marker in normalized for marker in MULTI_HOP_MARKERS)
 
-要求：
-1. 只补充历史中明确出现的信息，不要猜测或扩展新意图。
-2. 保留当前问题真正询问的动作、范围、时间和约束。
-3. 如果历史存在多个实体，只选择当前追问明确指向的实体。
-4. 只输出改写后的独立问题，不要解释。
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_contextualizer_prompt() -> str:
+        return CONTEXTUALIZER_PROMPT_PATH.read_text(encoding="utf-8")
 
-历史对话：
-{history}
-
-当前问题：
-{query}
-"""
+    @classmethod
+    def _contextualizer_prompt(cls, query: str, history: str) -> str:
+        return (
+            cls._load_contextualizer_prompt()
+            .replace("{{HISTORY}}", history)
+            .replace("{{USER_QUERY}}", query)
+        )

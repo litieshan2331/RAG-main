@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from app.rag.conversation import ContextDependencyDecision, ContextualizedQuery
 from app.rag.graph import OnlineRagGraph
 
 
@@ -66,3 +67,29 @@ def test_graph_returns_tool_context_when_answer_llm_is_unavailable() -> None:
 
     assert "联网搜索结果" in answer
     assert "today is Sunday" in answer
+
+
+def test_contextualize_node_exposes_multi_hop_plan() -> None:
+    graph = _graph_stub()
+    graph.context_service = SimpleNamespace(
+        contextualize=lambda _query, _history: ContextualizedQuery(
+            standalone_query="比较保养记录与手册周期",
+            decision=ContextDependencyDecision(
+                False,
+                "需要两项事实后比较",
+                0.95,
+                requires_decomposition=True,
+                sub_queries=[
+                    {"id": "q1", "query": "查询保养记录", "depends_on": []},
+                    {"id": "q2", "query": "查询手册周期", "depends_on": []},
+                ],
+            ),
+        )
+    )
+
+    update = graph._contextualize_query_node(
+        {"query": "比较保养记录与手册周期", "history": [], "user_id": "u1"}
+    )
+
+    assert update["requires_decomposition"] is True
+    assert len(update["sub_queries"]) == 2

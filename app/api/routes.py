@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.database import SessionLocal, get_db
 from app.core.errors import to_http_exception
 from app.core.health import HealthService
+from app.evaluation.ragas_evaluator import RagasDependencyError, RagasEvaluator
 from app.models.entities import KnowledgeDocument
 from app.rag.service import RagService
 from app.retrieval.hybrid import HybridRetriever
@@ -26,6 +27,8 @@ from app.schemas import (
     IngestResponse,
     IngestionTaskResponse,
     QueryRequest,
+    RagasEvaluationRequest,
+    RagasEvaluationResponse,
     RagRequest,
     RagResponse,
     ReadinessResponse,
@@ -377,6 +380,27 @@ def rag_chat_stream(request: RagRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/api/evaluation/ragas", response_model=RagasEvaluationResponse)
+def evaluate_rag_with_ragas(
+    request: RagasEvaluationRequest,
+    db: Session = Depends(get_db),
+) -> RagasEvaluationResponse:
+    def run_rag(sample):
+        return RagService(db).answer(
+            sample.question,
+            user_id=sample.user_id,
+            top_k=sample.top_k,
+            document_id=sample.document_id,
+        )
+
+    try:
+        return RagasEvaluator(run_rag).evaluate_sync(request.samples)
+    except RagasDependencyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _encode_sse(event: str, data: object) -> str:

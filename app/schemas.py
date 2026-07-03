@@ -131,3 +131,41 @@ class RagResponse(BaseModel):
     answer: str
     contexts: list[RetrievedDocument] = Field(default_factory=list)
     tool_trace: list[dict] = Field(default_factory=list)
+
+
+class RagasEvaluationSample(BaseModel):
+    sample_id: str | None = None
+    question: str = Field(min_length=1)
+    reference: str = Field(min_length=1)
+    user_id: str = "ragas-eval"
+    document_id: int | None = None
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class RagasEvaluationRequest(BaseModel):
+    samples: list[RagasEvaluationSample] = Field(min_length=1)
+
+
+class RagasMetricScores(BaseModel):
+    context_recall: float | None = None
+    context_precision: float | None = None
+    faithfulness: float | None = None
+
+
+class RagasEvaluationItem(BaseModel):
+    sample_id: str
+    question: str
+    reference: str
+    answer: str
+    route: str
+    context_count: int
+    scores: RagasMetricScores
+    metric_errors: dict[str, str] = Field(default_factory=dict)
+
+
+class RagasEvaluationResponse(BaseModel):
+    sample_count: int
+    successful_samples: int
+    judge_model: str
+    averages: RagasMetricScores
+    results: list[RagasEvaluationItem]

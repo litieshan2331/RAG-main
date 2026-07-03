@@ -30,6 +30,10 @@ dev = [
     "pytest-asyncio>=0.23.8",
     "respx>=0.21.1",
 ]
+evaluation = [
+    "instructor>=1.13,<1.14",
+    "ragas>=0.4.3,<0.5",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -39,6 +43,7 @@ build-backend = "hatchling.build"
 packages = ["app"]
 
 [tool.hatch.build.targets.wheel.force-include]
+"app/resources/prompts/conversation_contextualizer_prompt.txt" = "app/resources/prompts/conversation_contextualizer_prompt.txt"
 "app/resources/prompts/query_router_prompt.txt" = "app/resources/prompts/query_router_prompt.txt"
 "app/resources/prompts/text_to_sql_prompt.txt" = "app/resources/prompts/text_to_sql_prompt.txt"
 "app/resources/sql/retrieve_tables.sql" = "app/resources/sql/retrieve_tables.sql"

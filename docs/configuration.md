@@ -134,12 +134,10 @@ rewrite -> route -> hybrid_retrieval -> answer
 Before `route`, multi-turn requests pass through:
 
 ```text
-load_history -> context_dependency
-                    |-> independent -> use_original -> route
-                    |-> follow_up   -> rewrite_followup -> route
+load_history -> contextualize_query -> route
 ```
 
-Only confirmed follow-up questions receive historical context. Invalid or low-confidence dependency decisions are treated as independent questions, so prior intent is not injected into the router.
+The contextualizer decides history dependency and produces the standalone query in one structured LLM call. Independent questions are forced to keep the original query; invalid or low-confidence decisions also use the original query, so prior intent is not injected into the router.
 
 If a selected simple tool fails or returns no usable result, the graph can enter `react_agent` before continuing with static fallback. Low-confidence routing can also enter `react_agent` directly.
 
